@@ -4,6 +4,14 @@
     <uses-feature android:name="android.hardware.type.watch" />
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- For foreground services on Android P and higher -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- For specific foreground service types on Android 14 (API 34) and higher -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- For exact alarms on Android 12 (API 31) and higher -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
 
     <application
         android:allowBackup="true"
@@ -40,6 +48,12 @@
                 android:name="androidx.wear.tiles.PREVIEW"
                 android:resource="@drawable/tile_preview" />
         </service>
+
+        <service
+            android:name=".presentation.VibrationService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+        <receiver android:name=".presentation.VibrationReceiver" />
 
         <uses-library
             android:name="com.google.android.wearable"

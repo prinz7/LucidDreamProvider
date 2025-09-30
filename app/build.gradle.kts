@@ -12,8 +12,8 @@ android {
         applicationId = "com.jprinz.luciddreamprovider"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.0.2"
 
     }
 
@@ -46,7 +46,7 @@ dependencies {
     implementation(libs.ui)
     implementation(libs.ui.graphics)
     implementation(libs.ui.tooling.preview)
-    implementation(libs.compose.material)
+    implementation("androidx.wear.compose:compose-material:1.3.0") // Directly specified version
     implementation(libs.compose.foundation)
     implementation(libs.wear.tooling.preview)
     implementation(libs.activity.compose)
@@ -57,6 +57,7 @@ dependencies {
     implementation(libs.horologist.compose.tools)
     implementation(libs.horologist.tiles)
     implementation(libs.watchface.complications.data.source.ktx)
+    implementation(libs.material3)
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.ui.test.junit4)
     debugImplementation(libs.ui.tooling)
