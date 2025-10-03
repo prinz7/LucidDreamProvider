@@ -14,6 +14,11 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import com.jprinz.luciddreamprovider.R
+import com.jprinz.luciddreamprovider.presentation.VibrationPattern // Importieren der Datenklasse
+import com.jprinz.luciddreamprovider.presentation.availableVibrationPatterns // Importieren der Liste
+
+// Datenklasse für Vibrationsmuster (Duplikat, falls keine gemeinsame Datei existiert) - ENTFERNT
+// Liste der verfügbaren Vibrationsmuster (Duplikat, falls keine gemeinsame Datei existiert) - ENTFERNT
 
 class VibrationService : Service() {
 
@@ -22,14 +27,17 @@ class VibrationService : Service() {
     private var vibrationPendingIntent: PendingIntent? = null
 
     private var vibrationIntervalMillis = DEFAULT_VIBRATION_INTERVAL_MINUTES * 60 * 1000L
-    private var vibrateInSleepMode = false // Neue Zustandsvariable
-    private var vibrationPattern = longArrayOf(0, 500, 200, 500)
+    private var vibrateInSleepMode = false
+    private var vibrationPattern: LongArray = availableVibrationPatterns.first().pattern
 
     companion object {
         const val EXTRA_INTERVAL_MINUTES = "extra_interval_minutes"
-        const val EXTRA_VIBRATE_IN_SLEEP_MODE = "extra_vibrate_in_sleep_mode" // Neuer Schlüssel
+        const val EXTRA_VIBRATE_IN_SLEEP_MODE = "extra_vibrate_in_sleep_mode"
+        const val EXTRA_VIBRATION_PATTERN_ID = "extra_vibration_pattern_id"
+        const val ACTION_TEST_VIBRATION = "com.jprinz.luciddreamprovider.TEST_VIBRATION"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "VibrationServiceChannel"
+        val DEFAULT_VIBRATION_PATTERN_ID = availableVibrationPatterns.first().id
     }
 
     override fun onCreate() {
@@ -37,11 +45,12 @@ class VibrationService : Service() {
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        // Lade alle Einstellungen aus SharedPreferences beim Erstellen des Service
         val sharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedIntervalMinutes = sharedPreferences.getInt(KEY_VIBRATION_INTERVAL_MINUTES, DEFAULT_VIBRATION_INTERVAL_MINUTES)
         vibrationIntervalMillis = savedIntervalMinutes * 60 * 1000L
         vibrateInSleepMode = sharedPreferences.getBoolean(KEY_VIBRATION_IN_SLEEP_MODE_ENABLED, false)
+        val savedPatternId = sharedPreferences.getString(KEY_VIBRATION_PATTERN_ID, DEFAULT_VIBRATION_PATTERN_ID)!!
+        vibrationPattern = availableVibrationPatterns.find { it.id == savedPatternId }?.pattern ?: availableVibrationPatterns.first().pattern
 
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -67,19 +76,27 @@ class VibrationService : Service() {
         val editor = sharedPreferences.edit()
 
         intent?.let {
-            // Intervall aktualisieren, falls im Intent vorhanden
             if (it.hasExtra(EXTRA_INTERVAL_MINUTES)) {
                 val intervalMinutes = it.getIntExtra(EXTRA_INTERVAL_MINUTES, DEFAULT_VIBRATION_INTERVAL_MINUTES)
                 vibrationIntervalMillis = intervalMinutes * 60 * 1000L
                 editor.putInt(KEY_VIBRATION_INTERVAL_MINUTES, intervalMinutes)
             }
-            // Schlafmodus-Einstellung aktualisieren, falls im Intent vorhanden
             if (it.hasExtra(EXTRA_VIBRATE_IN_SLEEP_MODE)) {
                 vibrateInSleepMode = it.getBooleanExtra(EXTRA_VIBRATE_IN_SLEEP_MODE, false)
                 editor.putBoolean(KEY_VIBRATION_IN_SLEEP_MODE_ENABLED, vibrateInSleepMode)
             }
+            if (it.hasExtra(EXTRA_VIBRATION_PATTERN_ID)) {
+                val patternId = it.getStringExtra(EXTRA_VIBRATION_PATTERN_ID) ?: DEFAULT_VIBRATION_PATTERN_ID
+                vibrationPattern = availableVibrationPatterns.find { pattern -> pattern.id == patternId }?.pattern ?: availableVibrationPatterns.first().pattern
+                editor.putString(KEY_VIBRATION_PATTERN_ID, patternId)
+            }
         }
-        editor.apply() // Alle Änderungen speichern
+        editor.apply()
+
+        if (intent?.action == ACTION_TEST_VIBRATION) {
+            vibrate()
+            return START_NOT_STICKY
+        }
 
         if (intent?.action == VibrationReceiver.ACTION_TRIGGER_VIBRATION || intent?.action == null) {
              vibrate()
@@ -90,12 +107,10 @@ class VibrationService : Service() {
     }
 
     private fun vibrate() {
-        // Überprüfe den "Nicht stören"-Modus (Schlafmodus)
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val isDndActive = notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL &&
                           notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
 
-        // Vibriere nur, wenn (Schlafmodus-Vibration an ist) ODER (Nicht stören Modus aus ist)
         if (vibrateInSleepMode || !isDndActive) {
             if (vibrator.hasVibrator()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -180,6 +195,10 @@ class VibrationReceiver : android.content.BroadcastReceiver() {
         if (intent.action == ACTION_TRIGGER_VIBRATION) {
             val serviceIntent = Intent(context, VibrationService::class.java)
             serviceIntent.action = ACTION_TRIGGER_VIBRATION
+            val sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentPatternId = sharedPreferences.getString(KEY_VIBRATION_PATTERN_ID, VibrationService.DEFAULT_VIBRATION_PATTERN_ID)
+            serviceIntent.putExtra(VibrationService.EXTRA_VIBRATION_PATTERN_ID, currentPatternId)
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
             } else {

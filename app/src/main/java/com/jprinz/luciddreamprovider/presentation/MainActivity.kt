@@ -25,16 +25,28 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.*
+import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.ButtonDefaults
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Picker
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
+import androidx.wear.compose.material.Switch
+import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.TimeText
+import androidx.wear.compose.material.rememberPickerState
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.jprinz.luciddreamprovider.presentation.VibrationService
 import com.jprinz.luciddreamprovider.presentation.theme.LucidDreamProviderTheme
+import com.jprinz.luciddreamprovider.presentation.VibrationPattern
+import com.jprinz.luciddreamprovider.presentation.availableVibrationPatterns
 
 const val PREFS_NAME = "VibrationSettings"
 const val KEY_VIBRATION_ENABLED = "vibration_enabled"
 const val KEY_VIBRATION_INTERVAL_MINUTES = "vibration_interval_minutes"
-const val KEY_VIBRATION_IN_SLEEP_MODE_ENABLED = "vibration_in_sleep_mode_enabled" // Neuer Schlüssel
-const val DEFAULT_VIBRATION_INTERVAL_MINUTES = 20 // Von 1 auf 20 geändert
+const val KEY_VIBRATION_IN_SLEEP_MODE_ENABLED = "vibration_in_sleep_mode_enabled"
+const val KEY_VIBRATION_PATTERN_ID = "vibration_pattern_id" 
+const val DEFAULT_VIBRATION_INTERVAL_MINUTES = 20
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +81,14 @@ fun SettingsScreen() {
     var vibrateInSleepModeEnabled by remember {
         mutableStateOf(sharedPreferences.getBoolean(KEY_VIBRATION_IN_SLEEP_MODE_ENABLED, false))
     }
+    
+    var selectedPatternId by remember {
+        mutableStateOf(sharedPreferences.getString(KEY_VIBRATION_PATTERN_ID, availableVibrationPatterns.first().id)!!)
+    }
+    val selectedPattern = remember(selectedPatternId) {
+        availableVibrationPatterns.find { it.id == selectedPatternId } ?: availableVibrationPatterns.first()
+    }
+
     var showPermissionScreen by remember { mutableStateOf(false) }
 
     if (showPermissionScreen) {
@@ -89,7 +109,7 @@ fun SettingsScreen() {
             }
         )
     } else {
-        val scrollState = rememberScalingLazyListState() // Zustand für die Scrolling-Liste
+        val scrollState = rememberScalingLazyListState()
         Scaffold(
             timeText = { TimeText(modifier = Modifier.padding(top = 8.dp)) },
             positionIndicator = { PositionIndicator(scalingLazyListState = scrollState) }
@@ -100,13 +120,11 @@ fun SettingsScreen() {
                     .background(MaterialTheme.colors.background),
                 state = scrollState,
                 horizontalAlignment = Alignment.CenterHorizontally,
-                contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 16.dp, end = 16.dp) // Angepasstes Padding
+                contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp, start = 16.dp, end = 16.dp)
             ) {
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
+                item { Spacer(modifier = Modifier.height(16.dp)) }
 
-                item {
+                item { // Enable Vibration Switch
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -126,11 +144,11 @@ fun SettingsScreen() {
                                         startVibrationService(
                                             context,
                                             intervalMinutesString.toIntOrNull() ?: DEFAULT_VIBRATION_INTERVAL_MINUTES,
-                                            vibrateInSleepModeEnabled
+                                            vibrateInSleepModeEnabled,
+                                            selectedPattern.id
                                         )
                                     }
-                                }
-                                 else {
+                                } else {
                                     vibrationEnabled = false
                                     sharedPreferences.edit().putBoolean(KEY_VIBRATION_ENABLED, false).apply()
                                     stopVibrationService(context)
@@ -140,8 +158,7 @@ fun SettingsScreen() {
                     }
                 }
 
-                item {
-                    // Neue Switch für den Schlafmodus
+                item { // Vibrate in Sleep Mode Switch
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -164,7 +181,8 @@ fun SettingsScreen() {
                                     startVibrationService(
                                         context,
                                         intervalMinutesString.toIntOrNull() ?: DEFAULT_VIBRATION_INTERVAL_MINUTES,
-                                        isEnabled
+                                        isEnabled,
+                                        selectedPattern.id
                                     )
                                 }
                             }
@@ -172,15 +190,48 @@ fun SettingsScreen() {
                     }
                 }
 
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
+                item { Spacer(modifier = Modifier.height(16.dp)) }
 
-                item {
-                    Text("Interval (Minutes)")
-                }
+                item { Text("Vibration Pattern") }
+                item { // Pattern Picker
+                    val patternPickerState = rememberPickerState(initialNumberOfOptions = availableVibrationPatterns.size, initiallySelectedOption = availableVibrationPatterns.indexOf(selectedPattern))
+                    LaunchedEffect(patternPickerState.selectedOption) {
+                        val newPattern = availableVibrationPatterns[patternPickerState.selectedOption]
+                        if (newPattern.id != selectedPatternId) {
+                            selectedPatternId = newPattern.id
+                            sharedPreferences.edit().putString(KEY_VIBRATION_PATTERN_ID, newPattern.id).apply()
+                            if (vibrationEnabled) { // Service mit neuem Muster aktualisieren UND testen
+                                // Teste das neu ausgewählte Muster
+                                testVibrationPattern(context, newPattern.id)
 
-                item {
+                                // Aktualisiere den Service für die nächste geplante Vibration
+                                startVibrationService(
+                                    context,
+                                    intervalMinutesString.toIntOrNull() ?: DEFAULT_VIBRATION_INTERVAL_MINUTES,
+                                    vibrateInSleepModeEnabled,
+                                    newPattern.id
+                                )
+                            }
+                        }
+                    }
+
+                    Picker(
+                        state = patternPickerState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(100.dp), // KORREKTUR: Feste Höhe hinzugefügt
+                        readOnly = !vibrationEnabled
+                    ) {
+                        Text(availableVibrationPatterns[it].name, textAlign = TextAlign.Center)
+                    }
+                }
+                // Preview Button wurde entfernt
+
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+
+                item { Text("Interval (Minutes)") }
+
+                item { // Interval TextField
                     TextField(
                         value = intervalMinutesString,
                         onValueChange = { newValue ->
@@ -192,7 +243,8 @@ fun SettingsScreen() {
                                     startVibrationService(
                                         context,
                                         newInterval,
-                                        vibrateInSleepModeEnabled
+                                        vibrateInSleepModeEnabled,
+                                        selectedPattern.id
                                     )
                                 }
                             }
@@ -260,11 +312,19 @@ private fun PermissionRequestScreen(
     }
 }
 
-// Angepasste Funktion zum Starten des Service
-fun startVibrationService(context: Context, intervalMinutes: Int, vibrateInSleepMode: Boolean) {
+fun startVibrationService(context: Context, intervalMinutes: Int, vibrateInSleepMode: Boolean, patternId: String) {
     val intent = Intent(context, VibrationService::class.java).apply {
         putExtra(VibrationService.EXTRA_INTERVAL_MINUTES, intervalMinutes)
-        putExtra(VibrationService.EXTRA_VIBRATE_IN_SLEEP_MODE, vibrateInSleepMode) // Neues Extra
+        putExtra(VibrationService.EXTRA_VIBRATE_IN_SLEEP_MODE, vibrateInSleepMode)
+        putExtra(VibrationService.EXTRA_VIBRATION_PATTERN_ID, patternId)
+    }
+    context.startService(intent)
+}
+
+fun testVibrationPattern(context: Context, patternId: String) {
+    val intent = Intent(context, VibrationService::class.java).apply {
+        action = VibrationService.ACTION_TEST_VIBRATION
+        putExtra(VibrationService.EXTRA_VIBRATION_PATTERN_ID, patternId)
     }
     context.startService(intent)
 }
