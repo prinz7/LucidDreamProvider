@@ -7,7 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo // Import für ServiceInfo hinzugefügt
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.VibrationEffect
@@ -22,10 +22,12 @@ class VibrationService : Service() {
     private var vibrationPendingIntent: PendingIntent? = null
 
     private var vibrationIntervalMillis = DEFAULT_VIBRATION_INTERVAL_MINUTES * 60 * 1000L
-    private var vibrationPattern = longArrayOf(0, 500, 200, 500) // Default pattern: Off, 500ms On, 200ms Off, 500ms On
+    private var vibrateInSleepMode = false // Neue Zustandsvariable
+    private var vibrationPattern = longArrayOf(0, 500, 200, 500)
 
     companion object {
         const val EXTRA_INTERVAL_MINUTES = "extra_interval_minutes"
+        const val EXTRA_VIBRATE_IN_SLEEP_MODE = "extra_vibrate_in_sleep_mode" // Neuer Schlüssel
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "VibrationServiceChannel"
     }
@@ -35,16 +37,18 @@ class VibrationService : Service() {
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
+        // Lade alle Einstellungen aus SharedPreferences beim Erstellen des Service
         val sharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedIntervalMinutes = sharedPreferences.getInt(KEY_VIBRATION_INTERVAL_MINUTES, DEFAULT_VIBRATION_INTERVAL_MINUTES)
         vibrationIntervalMillis = savedIntervalMinutes * 60 * 1000L
+        vibrateInSleepMode = sharedPreferences.getBoolean(KEY_VIBRATION_IN_SLEEP_MODE_ENABLED, false)
 
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Vibration Service")
             .setContentText("Vibrations are active.")
-            .setSmallIcon(R.mipmap.ic_launcher) // Stellen Sie sicher, dass R.mipmap.ic_launcher existiert
-            .setOngoing(true) // Wichtig für Vordergrunddienste
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setOngoing(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -59,17 +63,24 @@ class VibrationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val sharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = sharedPreferences.edit()
+
         intent?.let {
-            val intervalMinutes = it.getIntExtra(EXTRA_INTERVAL_MINUTES, -1)
-            if (intervalMinutes != -1) {
+            // Intervall aktualisieren, falls im Intent vorhanden
+            if (it.hasExtra(EXTRA_INTERVAL_MINUTES)) {
+                val intervalMinutes = it.getIntExtra(EXTRA_INTERVAL_MINUTES, DEFAULT_VIBRATION_INTERVAL_MINUTES)
                 vibrationIntervalMillis = intervalMinutes * 60 * 1000L
-                val sharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                sharedPreferences.edit().putInt(KEY_VIBRATION_INTERVAL_MINUTES, intervalMinutes).apply()
+                editor.putInt(KEY_VIBRATION_INTERVAL_MINUTES, intervalMinutes)
+            }
+            // Schlafmodus-Einstellung aktualisieren, falls im Intent vorhanden
+            if (it.hasExtra(EXTRA_VIBRATE_IN_SLEEP_MODE)) {
+                vibrateInSleepMode = it.getBooleanExtra(EXTRA_VIBRATE_IN_SLEEP_MODE, false)
+                editor.putBoolean(KEY_VIBRATION_IN_SLEEP_MODE_ENABLED, vibrateInSleepMode)
             }
         }
-        
-        // Fix: Nur vibrieren, wenn die Aktion vom Receiver kommt ODER wenn es der erste Start ist (intent action nicht gesetzt)
-        // Dies verhindert eine doppelte Vibration beim Start aus der Activity, wenn der Alarm direkt danach auch feuert.
+        editor.apply() // Alle Änderungen speichern
+
         if (intent?.action == VibrationReceiver.ACTION_TRIGGER_VIBRATION || intent?.action == null) {
              vibrate()
         }
@@ -79,12 +90,20 @@ class VibrationService : Service() {
     }
 
     private fun vibrate() {
-        if (vibrator.hasVibrator()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createWaveform(vibrationPattern, -1))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(vibrationPattern, -1)
+        // Überprüfe den "Nicht stören"-Modus (Schlafmodus)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val isDndActive = notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL &&
+                          notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+
+        // Vibriere nur, wenn (Schlafmodus-Vibration an ist) ODER (Nicht stören Modus aus ist)
+        if (vibrateInSleepMode || !isDndActive) {
+            if (vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(vibrationPattern, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(vibrationPattern, -1)
+                }
             }
         }
     }
@@ -94,7 +113,6 @@ class VibrationService : Service() {
             action = VibrationReceiver.ACTION_TRIGGER_VIBRATION
         }
 
-        // Sicherstellen, dass FLAG_IMMUTABLE für PendingIntent verwendet wird
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         } else {
@@ -114,17 +132,12 @@ class VibrationService : Service() {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
                     alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, vibrationPendingIntent!!)
                 }
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT -> {
-                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAtMillis, vibrationPendingIntent!!)
-                }
                 else -> {
                     alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAtMillis, vibrationPendingIntent!!)
                 }
             }
         } catch (e: SecurityException) {
-            // Loggen oder behandeln Sie den Fehler, wenn keine Berechtigung für exakte Alarme vorhanden ist
-            // Dies sollte nicht passieren, wenn die UI die Berechtigung prüft, aber als Sicherheitsnetz.
-            stopSelf() // Stoppt den Dienst, wenn keine Alarme geplant werden können.
+            stopSelf()
         }
     }
 
@@ -138,7 +151,6 @@ class VibrationService : Service() {
         vibrationPendingIntent?.let {
             alarmManager.cancel(it)
         }
-        // stopForeground mit true oder STOP_FOREGROUND_REMOVE, je nach API-Level
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(Service.STOP_FOREGROUND_REMOVE)
         } else {
@@ -167,10 +179,7 @@ class VibrationReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_TRIGGER_VIBRATION) {
             val serviceIntent = Intent(context, VibrationService::class.java)
-            // Der Service sollte selbst entscheiden, ob er vibriert und den nächsten Alarm plant,
-            // basierend auf dem Intent, mit dem er gestartet wird (in onStartCommand).
-            // Hier übergeben wir die Aktion, damit onStartCommand entsprechend reagieren kann.
-            serviceIntent.action = ACTION_TRIGGER_VIBRATION 
+            serviceIntent.action = ACTION_TRIGGER_VIBRATION
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
             } else {
